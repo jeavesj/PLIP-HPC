@@ -1,10 +1,10 @@
 #!/bin/bash --login
-#SBATCH -J plip_gnina
+#SBATCH -J plip_rosetta
 #SBATCH --nodes=1
 #SBATCH --mem=8G
-#SBATCH -t 01:00:00
+#SBATCH -t 04:00:00
 #SBATCH --cpus-per-task=1
-#SBATCH --array=1-100%20
+#SBATCH --array=1-100%50
 #SBATCH --output=/mnt/scratch/jeaves/plip/logs/%x_%A_%a.out
 #SBATCH --error=/mnt/scratch/jeaves/plip/logs/%x_%A_%a.err
 
@@ -20,7 +20,7 @@ IN_DIR='/mnt/research/woldring_lab/Members/Eaves/FAIR_PLBAP/prepped_structures'
 OUT_PARENT='/mnt/scratch/jeaves/plip'
 PLIP_SCRIPT='/mnt/research/woldring_lab/Members/Eaves/PLIP-HPC/plip_singularity.py'
 
-POSE_TYPE="gnina"
+POSE_TYPE="rosetta"
 POSE_PREFIX="${POSE_TYPE}_best"
 TOPK=100
 
