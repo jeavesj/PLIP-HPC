@@ -1,0 +1,10 @@
+#!/bin/bash --login
+#SBATCH --job-name=plipcount
+#SBATCH --time=02:59:00
+#SBATCH --mem=8G
+
+module purge
+module load Miniforge3
+conda activate prep_env
+
+python3 /mnt/research/woldring_lab/Members/Eaves/PLIP-HPC/count_all.py
