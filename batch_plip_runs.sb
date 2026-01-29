@@ -16,8 +16,9 @@ IN_DIR='/mnt/research/woldring_lab/Members/Eaves/FAIR_PLBAP/prepped_structures'
 OUT_PARENT='/mnt/scratch/jeaves/plip'
 PLIP_SCRIPT='/mnt/research/woldring_lab/Members/Eaves/PLIP-HPC/plip_singularity.py'
 
-POSE_TYPE="af3"
-POSE_PREFIX="${POSE_TYPE}_best"
+POSE_TYPE="boltz2"
+POSE_PREFIX="boltz2"
+
 TOPK=1
 
 mkdir -p "${OUT_PARENT}/logs"
@@ -58,42 +59,122 @@ fi
 
 echo "[INFO] Parsed ${#PDBIDS[@]} pdbids from CSV."
 
-for r in $(seq 1 "$TOPK"); do
-  tag="$(rank_tag "$r")"
+if [[ "$TOPK" -gt 1 ]]; then 
+  for r in $(seq 1 "$TOPK"); do
+    tag="$(rank_tag "$r")"
 
-  SRC_TAR="${IN_DIR}/${POSE_PREFIX}${tag}.tar.gz"
-  if [[ ! -f "$SRC_TAR" ]]; then
-    echo "[WARN] Missing tar: $SRC_TAR (skip rank $tag)"
-    continue
-  fi
-
-  echo "[INFO] ===== RANK $tag : extracting $SRC_TAR ====="
-
-  tmpdir="$(mktemp -d -p /mnt/scratch/jeaves "plip_extract_${POSE_PREFIX}${tag}_XXXXXX")"
-  cleanup() { rm -rf "$tmpdir"; }
-  trap cleanup EXIT
-
-  tar -xzf "$SRC_TAR" -C "$tmpdir"
-
-  base_root=""
-  if [[ -d "$tmpdir/${POSE_PREFIX}${tag}" ]]; then
-    base_root="$tmpdir/${POSE_PREFIX}${tag}"
-  else
-    # If single top-level dir exists, use it; else use tmpdir
-    top="$(find "$tmpdir" -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
-    if [[ -n "${top:-}" ]]; then
-      base_root="$top"
-    else
-      base_root="$tmpdir"
+    SRC_TAR="${IN_DIR}/${POSE_PREFIX}${tag}.tar.gz"
+    if [[ ! -f "$SRC_TAR" ]]; then
+      echo "[WARN] Missing tar: $SRC_TAR (skip rank $tag)"
+      continue
     fi
-  fi
 
-  out_rank_dir="${OUT_PARENT}/${POSE_PREFIX}${tag}"
-  mkdir -p "$out_rank_dir"
+    echo "[INFO] ===== RANK $tag : extracting $SRC_TAR ====="
 
-  echo "[INFO] Using extracted base_root: $base_root"
-  echo "[INFO] Running PLIP for ${#PDBIDS[@]} targets at rank $tag ..."
+    tmpdir="$(mktemp -d -p /mnt/scratch/jeaves "plip_extract_${POSE_PREFIX}${tag}_XXXXXX")"
+    cleanup() { rm -rf "$tmpdir"; }
+    trap cleanup EXIT
 
+    tar -xzf "$SRC_TAR" -C "$tmpdir"
+
+    base_root=""
+    if [[ -d "$tmpdir/${POSE_PREFIX}${tag}" ]]; then
+      base_root="$tmpdir/${POSE_PREFIX}${tag}"
+    else
+      # If single top-level dir exists, use it; else use tmpdir
+      top="$(find "$tmpdir" -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
+      if [[ -n "${top:-}" ]]; then
+        base_root="$top"
+      else
+        base_root="$tmpdir"
+      fi
+    fi
+
+    out_rank_dir="${OUT_PARENT}/${POSE_PREFIX}${tag}"
+    mkdir -p "$out_rank_dir"
+
+    echo "[INFO] Using extracted base_root: $base_root"
+    echo "[INFO] Running PLIP for ${#PDBIDS[@]} targets at rank $tag ..."
+
+    for pdbid in "${PDBIDS[@]}"; do
+      [[ -z "${pdbid:-}" ]] && continue
+
+      PDB_SRC_DIR="${base_root}/${pdbid}"
+      if [[ ! -d "$PDB_SRC_DIR" ]]; then
+        # Try alternate layout A if base_root was single-top-dir but real layout was tmpdir/$pdbid
+        if [[ -d "$tmpdir/$pdbid" ]]; then
+          PDB_SRC_DIR="$tmpdir/$pdbid"
+        else
+          echo "[WARN] Missing extracted dir for $pdbid at rank $tag (skip)"
+          continue
+        fi
+      fi
+
+      OUT_DIR="${out_rank_dir}/${pdbid}"
+      mkdir -p "$OUT_DIR"
+
+      # Optional skip if it looks already done
+      if compgen -G "${OUT_DIR}/*.xml" >/dev/null; then
+        echo "[INFO] Exists: ${OUT_DIR}/*.xml (skip $pdbid rank $tag)"
+        continue
+      fi
+
+      prot_path="${PDB_SRC_DIR}/${pdbid}_protein.pdb"
+      lig_path="${PDB_SRC_DIR}/${pdbid}_ligand.sdf"
+
+      if [[ ! -f "$prot_path" ]]; then
+        echo "[WARN] Missing protein: $prot_path (skip $pdbid rank $tag)"
+        continue
+      fi
+      if [[ ! -f "$lig_path" ]]; then
+        echo "[WARN] Missing ligand:  $lig_path (skip $pdbid rank $tag)"
+        continue
+      fi
+
+      echo "[INFO] $pdbid rank $tag"
+      python3 "$PLIP_SCRIPT" \
+        -i "$prot_path" \
+        -l "$lig_path" \
+        -o "$OUT_DIR"
+    done
+
+    # Clean up this rank extraction
+    cleanup
+    trap - EXIT
+  done
+else
+    SRC_TAR="${IN_DIR}/${POSE_PREFIX}.tar.gz"
+    if [[ ! -f "$SRC_TAR" ]]; then
+      echo "[WARN] Missing tar: $SRC_TAR"
+      continue
+    fi
+
+    echo "[INFO] ===== Extracting $SRC_TAR ====="
+
+    tmpdir="$(mktemp -d -p /mnt/scratch/jeaves "plip_extract_${POSE_PREFIX}_XXXXXX")"
+    cleanup() { rm -rf "$tmpdir"; }
+    trap cleanup EXIT
+
+    tar -xzf "$SRC_TAR" -C "$tmpdir"
+
+    base_root=""
+    if [[ -d "$tmpdir/${POSE_PREFIX}" ]]; then
+      base_root="$tmpdir/${POSE_PREFIX}"
+    else
+      # If single top-level dir exists, use it; else use tmpdir
+      top="$(find "$tmpdir" -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
+      if [[ -n "${top:-}" ]]; then
+        base_root="$top"
+      else
+        base_root="$tmpdir"
+      fi
+    fi
+
+    out_rank_dir="${OUT_PARENT}/${POSE_PREFIX}"
+    mkdir -p "$out_rank_dir"
+
+    echo "[INFO] Using extracted base_root: $base_root"
+    echo "[INFO] Running PLIP for ${#PDBIDS[@]} targets..."
   for pdbid in "${PDBIDS[@]}"; do
     [[ -z "${pdbid:-}" ]] && continue
 
@@ -103,7 +184,7 @@ for r in $(seq 1 "$TOPK"); do
       if [[ -d "$tmpdir/$pdbid" ]]; then
         PDB_SRC_DIR="$tmpdir/$pdbid"
       else
-        echo "[WARN] Missing extracted dir for $pdbid at rank $tag (skip)"
+        echo "[WARN] Missing extracted dir for $pdbid (skip)"
         continue
       fi
     fi
@@ -113,23 +194,29 @@ for r in $(seq 1 "$TOPK"); do
 
     # Optional skip if it looks already done
     if compgen -G "${OUT_DIR}/*.xml" >/dev/null; then
-      echo "[INFO] Exists: ${OUT_DIR}/*.xml (skip $pdbid rank $tag)"
+      echo "[INFO] Exists: ${OUT_DIR}/*.xml (skip $pdbid)"
       continue
     fi
 
-    prot_path="${PDB_SRC_DIR}/${pdbid}_protein.pdb"
-    lig_path="${PDB_SRC_DIR}/${pdbid}_ligand.sdf"
+    if [[ "$POSE_TYPE" == "boltz2" ]]; then
+      path_root="boltz2_model_0_"
+    else
+      path_root=""
+    fi
+
+    prot_path="${PDB_SRC_DIR}/${pdbid}_${path_root}protein.pdb"
+    lig_path="${PDB_SRC_DIR}/${pdbid}_${path_root}ligand.sdf"
 
     if [[ ! -f "$prot_path" ]]; then
-      echo "[WARN] Missing protein: $prot_path (skip $pdbid rank $tag)"
+      echo "[WARN] Missing protein: $prot_path (skip $pdbid)"
       continue
     fi
     if [[ ! -f "$lig_path" ]]; then
-      echo "[WARN] Missing ligand:  $lig_path (skip $pdbid rank $tag)"
+      echo "[WARN] Missing ligand:  $lig_path (skip $pdbid)"
       continue
     fi
 
-    echo "[INFO] $pdbid rank $tag"
+    echo "[INFO] $pdbid"
     python3 "$PLIP_SCRIPT" \
       -i "$prot_path" \
       -l "$lig_path" \
@@ -139,6 +226,5 @@ for r in $(seq 1 "$TOPK"); do
   # Clean up this rank extraction
   cleanup
   trap - EXIT
-done
-
+fi
 echo "[INFO] Done."
